@@ -1,0 +1,83 @@
+name: Wiki documentation
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'docs/wiki/**'
+  repository_dispatch:
+    types: [docs]
+  gollum:
+
+env:
+  WIKI_SOURCE_REPO: ${{ github.repository }}
+  WIKI_SOURCE_REPO_DIR: ${{ github.repository }}/docs/wiki
+  WIKI_TARGET_REPO: ${{ github.repository }}.wiki
+  GIT_AUTHOR_NAME: "github-actions"
+  GIT_AUTHOR_EMAIL: "github-actions@github.com"
+  GIT_COMMIT_MESSAGE: "docs: Sync wiki from docs/wiki"
+
+jobs:
+  job-sync-docs-to-wiki:
+    runs-on: ubuntu-latest
+    if: github.repository == '7mochi/wiki-test' && github.event_name != 'gollum'
+    steps:
+      - name: Checkout source repo
+        uses: actions/checkout@v2
+        with:
+          repository: ${{ env.WIKI_SOURCE_REPO }}
+          path: ${{ env.WIKI_SOURCE_REPO }}
+
+      - name: Checkout wiki repo
+        uses: actions/checkout@v2
+        with:
+          repository: ${{ env.WIKI_TARGET_REPO }}
+          path: ${{ env.WIKI_TARGET_REPO }}
+      
+      - name: Configure git
+        run: |
+          git config --global user.name $GIT_AUTHOR_NAME
+          git config --global user.email $GIT_AUTHOR_EMAIL
+        working-directory: ${{ env.GITHUB_WORKSPACE }}
+      
+      - name: Sync wiki repo
+        run: |
+          rsync -avzr --delete --exclude='.git/' "$WIKI_SOURCE_REPO_DIR/" "$WIKI_TARGET_REPO"
+        working-directory: ${{ env.GITHUB_WORKSPACE }}
+
+      - name: Check if there are changes
+        id: git_status
+        run: |
+          mapfile -t CHECK_GIT_STATUS < <(git status -s)
+          printf "%s\n" "${CHECK_GIT_STATUS[@]}"
+          echo "changes=${#CHECK_GIT_STATUS[@]}" >> $GITHUB_OUTPUT
+        working-directory: ${{ env.WIKI_TARGET_REPO }}
+      
+      - name: Stage & push files into wiki repo
+        run: |
+          git add .
+          git commit -m "$GIT_COMMIT_MESSAGE [$GITHUB_ACTOR/${GITHUB_SHA::8}]"
+          git push --set-upstream https://$GITHUB_TOKEN@github.com/$WIKI_TARGET_REPO.git master
+        working-directory: ${{ env.WIKI_TARGET_REPO }}
+  
+  job-sync-wiki-to-docs:
+    runs-on: ubuntu-latest
+    if: github.repository == '7mochi/wiki-test' && github.event_name == 'gollum'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: master
+
+      - name: Sync wiki to docs
+        uses: newrelic/wiki-sync-action@main
+        with:
+          source: wiki
+          destination: docs/wiki
+          branch: master
+          token: ${{ secrets.GITHUB_TOKEN }}
+          gitAuthorName: ${{ env.GIT_AUTHOR_NAME }}
+          gitAuthorEmail: ${{ env.GIT_AUTHOR_EMAIL }}
+          commitMessage: ${{ env.GIT_COMMIT_MESSAGE }}
